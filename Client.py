@@ -5,7 +5,6 @@ import argparse
 def parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--server', type=str, default='127.0.0.1:8000')
-    #parser.add_argument('--server', type=str, default='114.226.167.34:8000')
     args = parser.parse_args()
     s = args.server
     server = s.split(':')
