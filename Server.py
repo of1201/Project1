@@ -1,18 +1,17 @@
 import socket
 import time
-import subprocess
-import argparse
-import os.path
-import threading
+import subprocess  # multi-processing
+import argparse  # parse cmd arguments
+import threading  # multi-threading
 import re
-from datetime import datetime
-import requests  # v2.28.2
 import sys
 import csv
 import pandas as pd
 import numpy as np
 from datetime import datetime as dt
 import os
+import json
+import requests  # v2.28.2
 import finnhub  # v2.4.15
 
 
@@ -32,16 +31,114 @@ def parser():
     parser = argparse.ArgumentParser()
     parser.add_argument('--tickers', nargs="*", type=str, default=['AAPL', 'MSFT', 'TOST'])
     parser.add_argument('--port', type=int, default=8000)
-    parser.add_argument('--sampling', type=int, default=5, choices=[5, 15, 30, 60]) 
+    parser.add_argument('--sampling', type=int, default=5, choices=[5, 15, 30, 60])
     args = parser.parse_args()
-    # tickers = args.tickers
-    # n = len(tickers)
-    # a = tickers[1:n - 1]
-    # a = a.split(', ')
-    # args.tickers = a
+
     return args
 
-def task(host, port, tickers, sampling):
+def tcp(connection, report, tickers, sampling):
+
+    while True:
+        try:
+            bdata = connection.recv(4096)
+            #print('received {!r}'.format(bdata))
+            data = ((str(bdata)).split('\''))[1]
+            print('client input: {}'.format(data))
+
+            # case: clients request data for a date
+            if re.match(r"^data \d\d\d\d-\d\d-\d\d-\d\d:\d\d$", data):
+                timestr = (data.split(' '))[1]
+                try:
+                    time = dt.strptime(timestr, '%Y-%m-%d-%H:%M')
+                except Exception as e:
+                    connection.sendall('cannot convert input to date'.encode('utf-8'))
+
+                cur_time = dt.now()
+                # print(time)
+                try:
+                    if time > cur_time:  # specifying time in the future, returns the latest data
+                        query = dataquery(report)
+                        query.append('(specifying time in the future, returns the latest data)')
+                    else:
+                        query = dataquery(report, time)
+                except:
+                    query = ['Server has no data', '(specifying time before any data exists)']
+                connection.sendall(json.dumps(query).encode())
+
+                #print('data have date')
+            elif re.match(r"^data$", data):  # If time is not specified, the client returns latest data
+                #print(time)
+                query = dataquery(report)
+                query.append('(calling data without time returns the latest data)')
+                connection.sendall(json.dumps(query).encode())
+                #print('data no date')
+
+            elif re.match(r"^delete .", data):
+                ticker = (data.split(' '))[1]
+                #print('delete TICKER', ticker)
+                msg = 0
+                if ticker in tickers:
+                    try:
+                        tickers.remove(ticker)
+                        report = report[report.ticker != ticker]
+                        msg = 0
+                    except:
+                        msg = 1
+                else:
+                    msg = 2
+
+                if msg == 0:
+                    connection.sendall(b'0')
+                elif msg == 1:
+                    connection.sendall(b'1')
+                elif msg == 2:
+                    connection.sendall(b'2')
+                #print(tickers)
+
+            elif re.match(r"^add .", data):
+                ticker = (data.split(' '))[1]
+                #print('add TICKER', ticker)
+                msg = 0
+                if ticker in tickers:
+                    msg = 0
+                else:
+                    try:
+                        tickers.append(ticker)
+                        report = generate(tickers, sampling)
+                        msg = 0
+                    except Exception as e:
+                        tickers.remove(ticker)
+                        if str(e) == 'some tickers given are invalid':
+                            msg = 2
+                        else:
+                            msg = 1
+
+                if msg == 0:
+                    connection.sendall(b'0')
+                elif msg == 1:
+                    connection.sendall(b'1')
+                elif msg == 2:
+                    connection.sendall(b'2')
+
+                #print(tickers)
+
+            elif data.lower() == 'report':
+                try:
+                    report = generate(tickers, sampling, True)
+                    connection.sendall(b'report generated')
+                except:
+                    connection.sendall(b'server failed to generate report')
+                #print('report')
+
+            else:
+                connection.sendall(b'unrecognized inputs')
+                print('unrecognized input ' + data + ' from client')
+        except Exception as e:  # something wrong when interacting with clients
+            print(e)
+            connection.close()
+            break
+
+def task(port, tickers, sampling):
     # Create a TCP/IP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -53,105 +150,60 @@ def task(host, port, tickers, sampling):
     sock.bind(('', port))
 
     # Listen for incoming connections
-    sock.listen(1)
+    sock.listen(10)  # 10 clients can be in the queue
 
-    #getting stock data and generating csv file
-    generate(tickers, sampling)
+    # getting stock data and generating csv file. Return the report
+    try:
+        report = generate(tickers, sampling, True)
+    except Exception as e:
+        if str(e) == 'some tickers given are invalid':
+            print('invalid tickers')
+        else:
+            print('server error')
+        sys.exit(1)
 
+    conn_list = []
+    conn_dt = {}
     while True:
-        # Wait for a connection
+        # Start a new session and wait for a connection
         print('waiting for a connection')
         connection, client_address = sock.accept()
-        try:
-            print('client connected:', client_address)
-            while True:
-                bdata = connection.recv(64)
-                #print('received {!r}'.format(bdata))
-                data = ((str(bdata)).split('\''))[1]
-                #print(data)
 
-                #不知道为什么如果不send回client信息的话client ctrl+c就会死循环..所以就算没要求return的report我也增加了一个send
-                if re.match(r"^data \d\d\d\d-\d\d-\d\d-\d\d:\d\d$",data):
-                    timestr = ticker = (data.split(' '))[1]
-                    try:
-                        time = datetime.strptime(timestr, '%Y-%m-%d-%H:%M')
-                    except Exception as e:
-                        connection.sendall('cannot convert input to date'.encode('utf-8'))
-
-                    cur_time = datetime.now()
-                    if time>cur_time:#specifying time in the future, returns the latest data
-                        dataquery(cur_time)
-                    else:
-                        dataquery(time)
-                    #print(time)
-                    connection.sendall(b'0')
-                    #print('data have date')
-                elif re.match(r"^data$",data):#If time is not specified, the client returns latest data
-                    time = datetime.now()
-                    #print(time)
-                    dataquery(time)
-                    connection.sendall(b'0')
-                    #print('data no date') 
-
-                elif re.match(r"^delete TICKER .",data):
-                    ticker = (data.split(' '))[2]
-                    #print('delete TICKER', ticker)
-                    try:
-                        if ticker in tickers :
-                            tickers.remove(ticker)
-                            connection.sendall(b'0')
-                        else :
-                            connection.sendall(b'2')
-                    except:#我实在不知道为什么这样一个请求能引发server error...他只是要删除一个数据而已..
-                        connection.sendall(b'1')
-                    #print(tickers)
-                    
-
-                elif re.match(r"^add TICKER .",data):
-                    ticker = (data.split(' '))[2]
-                    #print('add TICKER', ticker)
-                    if ticker in tickers :
-                        connection.sendall(b'0') #success, already exist我不确定这算success还是invalid
-                    else:
-                        msg=0
-                        '''发送请求download historical data,失败的话根据失败信息（1,2）
-                        code:
+        if client_address not in conn_list:
+            conn_list.append(client_address)
+            conn_dt[client_address] = connection
+            # build thread here, so clients don't have to queue up
+            t = threading.Thread(target=tcp, args=(connection, report, tickers, sampling))
+            t.start()
+        print('Client connected. Client ip:', client_address)
 
 
-                        '''
-                        if msg == 0: 
-                            tickers.append(ticker)
-                            connection.sendall(b'0')
-                        elif msg == 1:  # 1=server error
-                            connection.sendall(b'1') 
-                        elif msg == 2:  # 2=ticker not found
-                            connection.sendall(b'2') 
-                    #print(tickers)
-
-                elif data == 'report':
-                    generate(tickers, sampling)
-                    connection.sendall(b'report generated')
-                    #print('report')
-
-                else:
-                    connection.sendall(b'unrecognized input from client')
-                    print('unrecognized input '+data+' from client')
-        except Exception as e:
-            print(e)
-        finally:
-            connection.close()
-
-
-def dataquery(time):
+def dataquery(df, time=dt.now()):
     '''
-    query the server for latest price and signal available as of the time specified. 
+    query the server for latest price and signal available as of the time specified.
     returns data like:
     AAPL    162.45,1
     MSFT    302.66,0
 
     '''
 
-def generate(tickers, sampling=5):
+    df['datetime'] = pd.to_datetime(df['datetime'])
+    time_final = df['datetime'][df['datetime'] <= time].iloc[-1]
+    df_final = df.loc[df['datetime'] == time_final]
+    df_final = df_final[['ticker', 'price', 'signal']]
+    df_final['result'] = df['ticker'].astype(str) + "   " + df['price'].astype(str) + "," + df["signal"].astype(str)
+    lst = df_final['result'].to_list()
+
+    n_ticker = df['ticker'].nunique()
+    if n_ticker > len(lst):
+        lst.append('some tickets\' data for the input time are not available')
+
+    return lst
+
+
+
+
+def generate(tickers, sampling=5, save=False):
     '''
     connects to Source 1 and Source 2 and constructs a series of stock prices sampled at X-minute intervals, using all available historical data for the given tickers.
     then immediately computes a Boolean trading signal series for the entire price time series, and does profit & loss calculation. Then this information is written to a CSV file named report.csv in the format below.
@@ -199,12 +251,13 @@ def generate(tickers, sampling=5):
             my_list = list(cr)
             # process df, calc rolling mean and std
             df = pd.DataFrame(columns=my_list[0], data=my_list[1:])[['time', 'close']]
-            df_1 = df.copy()  # checkpoint
+            if df.empty:
+                raise Exception("some tickers given are invalid")
             # source 2
             t_latest = dt.strptime(df['time'][0], '%Y-%m-%d %H:%M:%S')
             finnhub_client = finnhub.Client(api_key=key2)
             s2 = finnhub_client.quote(ticker)
-            t_2 = datetime.fromtimestamp(s2['t'])
+            t_2 = dt.fromtimestamp(s2['t'])
             p_2 = s2['c']
             if t_2 > t_latest:
                 t_2_str = dt.strftime(t_2, '%Y-%m-%d %H:%M:%S')
@@ -240,7 +293,7 @@ def generate(tickers, sampling=5):
             tickers_dict[f'{ticker}'] = df
 
     # pd.set_option('display.max_rows', None)
-    output = pd.concat([tickers_dict['AAPL'], tickers_dict['MSFT']], sort=False).sort_index()
+    output = pd.concat(tickers_dict.values(), sort=False).sort_index()
     # format
     output['signal'] = output['signal'].astype('int')
     output = output.round(2)
@@ -248,11 +301,14 @@ def generate(tickers, sampling=5):
     output = output.rename(columns={'time': 'datetime'})
     output['datetime'] = pd.to_datetime(output['datetime']).dt.strftime('%Y-%m-%d-%H:%M')
     # write to disk
-    filepath = os.path.join(os.getcwd(), "report.csv")
-    print("report saved at this address: ")
-    print(filepath)
-    print()
-    output.to_csv(filepath, index=False)
+    if save:
+        filepath = os.path.join(os.getcwd(), "report.csv")
+        print("report saved at this address: ")
+        print(filepath)
+        print()
+        output.to_csv(filepath, index=False)
+
+    return output
 
 
 def main():
@@ -260,14 +316,11 @@ def main():
     # task(host, args.port, args.tickers, args.sampling)
     print()
     print('inputs received for the server:')
-    print('port: ')
-    print(args.port)
-    print('tickers: ')
-    print(args.tickers)
-    print('sampling period: ')
-    print(str(args.sampling) + 'min')
+    print('port: {}'.format(args.port))
+    print('tickers: {}'.format(args.tickers))
+    print('sampling period: {} min'.format(args.sampling))
     print()
-    t = threading.Thread(target=task, args=(host, args.port, args.tickers, args.sampling))  # multi-threading
+    t = threading.Thread(target=task, args=(args.port, args.tickers, args.sampling))
     t.daemon = True  # run at background for a long running process
     t.start()
 
@@ -275,7 +328,6 @@ def main():
         try:
             time.sleep(0.01)
         except KeyboardInterrupt:
-            print('server ended with no error')
             sys.exit(0)
 
 if __name__ == "__main__":

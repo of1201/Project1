@@ -1,6 +1,8 @@
 import socket
 import sys
 import argparse
+import json
+import re
 
 def parser():
     parser = argparse.ArgumentParser()
@@ -25,24 +27,31 @@ def main():
         print("invalid server argument")
         exit()
     server_address = (host, port)
-    print(server)
     #print('connecting to {} port {}'.format(*server_address))
+
     try:
+        # connect to server
         sock.connect(server_address)
+        print('Connected to: {}'.format(server))
         while True:
             message = input()
-            #send
+            # send message to server
             sock.sendall(message.encode('utf-8'))
             #receive
-            data = sock.recv(32)
-            #怎样才算server not responding啊......！
-            print('received {!r}'.format(data))
+            if re.match(r"^data$", message) or re.match(r"^data \d\d\d\d-\d\d-\d\d-\d\d:\d\d$", message):
+                data = json.loads(sock.recv(4096).decode())
+                for i in data:
+                    print(i)
+            else:
+                data = str(sock.recv(4096), 'utf-8')
+                print(data)
     except Exception as e:
         print(e)
+        sys.exit(1)
+    except KeyboardInterrupt:
+        sys.exit(0)
+
 
 if __name__ == "__main__":
-    try:
-        main()
-    except:
-        exit()
+    main()
 
