@@ -55,21 +55,21 @@ class communication:
         sock = self.server_parser.create_socket()  # server socket object
 
         conn_list = []
-        while True:
+        while True:  # continuously listen for new connections
 
             # ensure that server can accept new connection
             if not conn_list:
                 print('waiting for a connection')
             connection, client_address = sock.accept()
 
-            # make sure the server can accept new connections
+            # establish connection with new client
             if client_address not in conn_list:
-                conn_list.append(client_address)  # store all clients connections in a list
-                # build thread here, so clients don't have to queue up because each a new client starts
+                conn_list.append(client_address)  # store each new client connection in a list
+                # build thread here so the server can deal with multiple clients the same time
                 thread_client_interaction = threading.Thread(target=self.tcp_interaction, args=(connection,))
                 thread_client_interaction.start()
                 print('Client connected. Client ip:', client_address)
-            # if client address already exists, keep looping and wait for another client
+            # if client address already exists, server would keep waiting for another client
             else:
                 print('Client already connected.')
 
@@ -78,7 +78,7 @@ class communication:
         perform task according to client's inputs
         """
 
-        while True:  # server can continuously process on new client input
+        while True:  # server can continuously process on client's other inputs
             try:
                 # parse client input and store as string
                 client_input = self.client_parser.get_arguments(connection)
