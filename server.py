@@ -34,7 +34,7 @@ class communication:
 
     def launch_server(self):
         """
-        make stock price keep updating in database class and create report cache in controller class
+        make server a socket that can receive inputs from multiple clients and perform tasks for each client
         """
 
         # parse server arguments
