@@ -1,7 +1,7 @@
 # project1
 
 ## main takeaways and improvement from last time
-1. applied OOP design principles by decoupling logically separate pieces
+1. applied OOP design principles by decoupling logically separate pieces using class
 2. debugging:
     1. run unit test for each class's member functions by checking its output
     2. used pycharm debugger to check the lines of code that caused the error
