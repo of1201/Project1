@@ -23,7 +23,7 @@ class communication:
     """
     get server arguments and client inputs and perform operations accordingly
 
-    # interact between controller (database, trading_strategy, report), server_parser, and client_parser
+    # interact between controller (database, trading_strategy, genReport), server_parser, and client_parser
     """
 
     def __init__(self):
