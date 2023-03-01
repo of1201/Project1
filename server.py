@@ -180,7 +180,7 @@ class communication:
 
     def client_add_tickers(self, client_input):
         """
-        add tickers according to clients inputs
+        add tickers according to client inputs
         """
 
         # get ticker string
@@ -199,7 +199,7 @@ class communication:
 
     def client_delete_tickers(self, client_input):
         """
-        delete tickers according to clients inputs
+        delete tickers according to client inputs
         """
 
         # get ticker string
