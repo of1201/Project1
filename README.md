@@ -15,6 +15,6 @@ It has different classes for different tasks:
 2. class "trading_strategy": calculate the trading strategy analystics like signal time series, pnl time series, etc
 3. class "report": generate the final report
 4. class "controller": coordinate among database, trading_strategy and report. Control these three classes in one
-
+----
 5. class "communication
 
